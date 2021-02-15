@@ -36,10 +36,11 @@ for(x in 1:length(unq_stock))
 }
 big_out$year<-as.character(big_out$year)
 big_out_sum$year<-as.character(big_out_sum$year)
-#==find fF that maximizes YPR over time
-#==find F that puts you at B35%
 
 
+#================================
+# Plots
+#================================
 library(ggplot2)
 .THEME    = theme_bw(base_size = 12, base_family = "") +
   theme(strip.text.x = element_text(margin= margin(1,0,1,0)),
@@ -49,6 +50,7 @@ library(ggplot2)
         panel.background = element_blank(),
         strip.background = element_rect(color="white",fill="white"))
 
+#==YPR
 p<-ggplot(big_out)+
   geom_line(aes(x=f,y=ypr,color=year))+
   geom_point(data=big_out_sum,aes(x=f_max,y=max_ypr,color=year))+
@@ -56,8 +58,8 @@ p<-ggplot(big_out)+
   .THEME
 
 print(p)
-#write.csv(big_out,"big_out.csv")
 
+#==SBPR
 p<-ggplot(big_out)+
   geom_line(aes(x=f,y=sbpr,color=year))+
   geom_point(data=big_out_sum,aes(x=F40,y=B40,color=year))+
