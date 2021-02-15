@@ -31,7 +31,7 @@ for(f in 1:length(input_f))
    
  }
  eq_yield[f]<-sum(y_at_age[proj_yr-1,]*specs_in$weight,na.rm=T)
- eq_sbpr[f]<-sum(y_at_age[proj_yr-1,]*specs_in$weight*specs_in$prob_mature,na.rm=T)
+ eq_sbpr[f]<-sum(n_at_age[proj_yr-1,]*specs_in$weight*specs_in$prob_mature,na.rm=T)
 } 
  list(ypr=eq_yield,sbpr=eq_sbpr,f=input_f)
   
