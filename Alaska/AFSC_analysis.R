@@ -56,8 +56,9 @@ p<-ggplot(big_out)+
   geom_point(data=big_out_sum,aes(x=f_max,y=max_ypr,color=year))+
   facet_wrap(~stock, scales ='free') +
   .THEME
-
+png(paste("Alaska/plots/YPR.png",sep=""),height=6,width=8,res=500,units='in')
 print(p)
+dev.off()
 
 #==SBPR
 p<-ggplot(big_out)+
@@ -65,8 +66,9 @@ p<-ggplot(big_out)+
   geom_point(data=big_out_sum,aes(x=F40,y=B40,color=year))+
   facet_wrap(~stock, scales ='free') +
   .THEME
-
+png(paste("Alaska/plots/SBPR.png",sep=""),height=6,width=8,res=500,units='in')
 print(p)
+dev.off()
 #==dots inthese figures are the reference points
 
 
