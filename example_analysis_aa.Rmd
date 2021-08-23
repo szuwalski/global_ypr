@@ -1,0 +1,339 @@
+---
+title: "Exploring changing Linf, t, M and mat on YPR"
+author: "WGGRAFY ToR3"
+date: "22/08/2021"
+output:
+  html_document:
+    code_folding: hide
+    code_download: true
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: no
+  md_document:
+    variant: markdown_github
+  pdf_document:
+    toc: yes
+
+---
+
+### libraries & functions
+
+Cody's YPR function is copied to this chunk, but I add one extra output to the ypr_age() function, where sbpr is calculated assuming hyperallometric allocation to reproduction. See recent Marshall et al. PNAS paper (https://www.pnas.org/content/118/34/e2100695118.short)
+For this we add eq_sbpr_hyper output, where reproductive output does not scale linearly with weight, but with the generic species-average exponent of 1.18 (species-specific data is actually available in Marshall et al. study).
+
+```{r, echo = T, eval = T}
+
+rm(list = ls()) # clear memory
+
+ypr_age<-function(specs_in,proj_yr,input_f)
+{
+ eq_yield<-rep(0,length(input_f))
+ eq_sbpr<-rep(0,length(input_f))
+ eq_sbpr_hyper<-rep(0,length(input_f))
+ 
+for(f in 1:length(input_f))
+{
+ n_at_age<-matrix(ncol=nrow(specs_in),nrow=proj_yr)
+ y_at_age<-matrix(ncol=nrow(specs_in),nrow=proj_yr)
+ 
+ n_at_age[1,1]<-1
+ for(z in 2:ncol(n_at_age))
+   n_at_age[1,z]<-n_at_age[1,z-1]*exp(-specs_in$nat_m[z-1])
+ 
+ for(x in 2:nrow(n_at_age))
+ {
+   n_at_age[x,1]<-1
+  for(y in 2:(ncol(n_at_age)-1)) 
+  {
+    n_at_age[x,y]<-n_at_age[x-1,y-1]*exp(-(specs_in$nat_m[y-1]+input_f[f]*specs_in$fish_sel[y]))
+    y_at_age[x,y]<-n_at_age[x-1,y-1]* (input_f[f]*specs_in$fish_sel[y]/(specs_in$nat_m[y-1]+input_f[f]*specs_in$fish_sel[y]))*
+      (1-exp(-(specs_in$nat_m[y-1]+input_f[f]*specs_in$fish_sel[y])))
+  }
+   # plus group
+   y<-ncol(n_at_age)
+   n_at_age[x,y]<-n_at_age[x-1,y-1]*exp(-(specs_in$nat_m[y-1]+input_f[f]*specs_in$fish_sel[y])) + n_at_age[x-1,y]*exp(-(specs_in$nat_m[y]+input_f[f]*specs_in$fish_sel[y]))
+   y_at_age[x,y]<-n_at_age[x-1,y-1]* (input_f[f]*specs_in$fish_sel[y]/(specs_in$nat_m[y-1]+input_f[f]*specs_in$fish_sel[y]))*(1-exp(-(specs_in$nat_m[y-1]+input_f[f]*specs_in$fish_sel[y]))) +
+                  n_at_age[x-1,y]  * (input_f[f]*specs_in$fish_sel[y]/(specs_in$nat_m[y]+input_f[f]*specs_in$fish_sel[y]))  *(1-exp(-(specs_in$nat_m[y]+input_f[f]*specs_in$fish_sel[y])))
+   
+   
+ }
+ eq_yield[f]<-sum(y_at_age[proj_yr-1,]*specs_in$weight,na.rm=T)
+ eq_sbpr[f]<-sum(n_at_age[proj_yr-1,]*specs_in$weight*specs_in$prob_mature,na.rm=T)
+ #for hyperallometric allocation without species specific information reproduction output scales with body weight with the average species specific exponent of 1.18. Because this makes total repr output much higher and harder to compare with linear sbpr we can scale it by 1/3 or so
+ eq_sbpr_hyper[f]<-sum(n_at_age[proj_yr-1,]*(0.33*specs_in$weight^1.18)*specs_in$prob_mature,na.rm=T)
+} 
+ list(ypr=eq_yield,sbpr=eq_sbpr,sbpr_hyper=eq_sbpr_hyper, f=input_f)
+  
+}
+
+
+```
+
+Here we have various functions to calculate VB growth (using t0 or l0), mortality at size based on Gislasson et al. 2010 equation, and logistic maturation or selectivity function. 
+
+```{r library}
+
+specs<-data.frame(read.csv("basic_example/example_age_specs.csv"))
+library(ggplot2, cowplot)
+
+#Von Bertalanffy growth function (3 parameter)
+vb_length <- function (Linf, vbk, t0, ages) 
+{
+    return(Linf * (1 - exp(-vbk * (ages - t0))))
+}
+
+vb_length_l0 <- function (Linf, vbk, L0, ages) 
+{
+    return(Linf - (Linf-L0)*exp(-vbk*ages))
+}
+
+
+## Gislason et al. 2010 mortality at length function that takes laa as a vector of lengths at age
+mort_length <- function (laa, Linf, vbk) 
+  {
+  return(exp(0.55-1.61*log(laa)+1.44*log(Linf)+log(vbk)))
+}
+
+## Cody might have a different function for maturity probability. Here I am using Malcolm Haddon's function from mqmf package, which is based on a and b parameters. 
+# 1/(1+(1/exp(a + b x sizeage)))
+# Lm50 = -a/b and the inter-quartile distance is 2.log(3)/b 
+# same function can be used for maturity at age, but a and b will be of course different then
+# we also use the same function for selectivity at size
+
+mat_size <- function (a, b, sizeage) 
+{
+    term <- exp(a + b * sizeage)
+    ans <- term/(1 + term)
+    return(ans)
+}
+
+```
+
+### North Sea plaice parameters
+
+To use one empirical and rather extreme case of life-history change, we take North Sea plaice study of Walraven et al. 2010 (https://www.sciencedirect.com/science/article/abs/pii/S1385110109000707), the paper is also uploaded into github directory. 
+
+This is a temporal analysis of growth and maturation parameters in 1900, 1980 and 2000, showing extreme decrease in Linf and considerably earlier maturation. The authors suggest that these life-history changes are driven by fisheries induced evolution, since changes in temperature were not very big. As in many cases, attribution might be difficult. 
+
+Note - it seems that growth curve, yield and especially sbpr are very sensitive to early growth. This is because assuming size dependant mortality, as in Gislasson et al. 2010, we get big differences in survival from small differences in early growth. So assumptions about L0 or t0, or even small differences in vb_k will have big effects. We should probably explore it.
+
+```{r}
+
+ages <- seq(0,20,1) 
+years <- c(1900,1980,2000)
+vbk <- c(0.09, 0.2, 0.23) #values for 1900, 1980, 2000 - females only
+Linf <- c(90,53,48)
+Lmat <- c(38,32,28) # this is a little hard to infer as maturation is given as 50% probability at different ages. So we take ages where maturation prob is ca 50% and look at length  
+#t0 <- c(-1, -0.9, -0.8) # Walraven did not provide t0. They assumed L0 = 0. 
+L0 <- c(0,0,0)  
+
+#to convert length to weight I am using generic parameters
+LWa <- 0.01
+LWb <- 3
+
+# If maturation data at age is not available we can use logistic function to get maturation probability. I am not sure whether there is a standardised way to derive a and b parameters when only length at 50% is available (some spread must be assumed), Here I just derived them using trial and error to ensure we get approximately similar values as are given in Lmat above
+mat_a <- c(-8.5, -6, -5.5)
+mat_b <- c(0.25, 0.25, 0.3)
+
+## if you want to explore this further 
+#  a <- -6 #less negative values reduce Lm50
+#  b <- 0.25 # higher values (above 0.2) make a steeper function
+#  -a/b # this will give Lm50
+#  round(mat_size(a,b,sizeage=laa),3)
+
+# Use the same function for selectivity at age, but assume that 50% selectivity is a bit earlier than 50% maturity and the function is even steeper
+sel_a <- c(-8, -6, -5)
+sel_b <- c(0.25, 0.25, 0.25)
+#  -a/b # this will give Lm50
+#round(mat_size(sel_a[1],sel_b[1],sizeage=laa1),3)
+```
+
+### Generate life-history table
+
+```{r}
+
+life_hist <-data.frame(laa=NULL,waa=NULL,maa=NULL,saa=NULL,mortaa=NULL,year=NULL,species=NULL)
+
+ unq_values<-unique(vbk)
+ 
+  for(y in 1:length(unq_values)) {
+
+## length at age for growth parameters    
+  laa <- vb_length_l0(Linf[y], vbk[y], L0[y], ages)
+#weight at age assuming universal conversion (0.01 and 3)
+  waa <- LWa*laa^LWb
+#maturity at age in cases where we don't have age specific maturity data. Check mat_a and mat_b values, to make sure they make sense
+  maa <- mat_size(mat_a[y], mat_b[y], laa)
+#selectivity at age, using the same logistic function but slightly different parameters
+  saa <- mat_size(sel_a[y], sel_b[y], laa)
+#mortality at age assuming Gislason et al. 2010 equation 
+  mortaa <- mort_length(laa, Linf[y], vbk[y])
+  
+  life_hist <- rbind(life_hist,data.frame(cbind(age = ages, laa = laa, waa = waa, mataa = maa, selaa = saa, mortaa = mortaa, year= rep(years[y], length(laa)))))
+}
+
+ # the L0 based vB curve give 0 size at age 0, which give infinite mortality and wrecks calculations. So I just delete it 
+life_hist <- life_hist[-which(life_hist$waa == 0),]
+life_hist$species <- "north_sea_plaice"
+life_hist$year<-as.character(life_hist$year)
+
+## format for ypr_age function
+specs2 <- data.frame(round(cbind(life_hist$waa, life_hist$selaa, life_hist$mataa, life_hist$mortaa),3))
+specs2$year <- life_hist$year
+specs2$species <- life_hist$species
+colnames(specs2) <- colnames(specs)
+ 
+```
+
+### plot life-history
+
+```{r}
+## for North Sea plaice we actually have maturation at age up to age 5 or 6 in Table 1. So after checking that logistic equation based values are compatible with observations we replace the first 5-6 values. This is manual part, should to be fixed 
+
+life_hist$mataa[which(life_hist$year == 1900)][1:6] <- c(0, 0.02, 0.09, 0.17, 0.38, 0.75)
+life_hist$mataa[which(life_hist$year == 1980)][1:5] <- c(0, 0.01, 0.08, 0.45, 0.93)
+life_hist$mataa[which(life_hist$year == 2000)][1:6] <- c(0, 0.25, 0.82, 0.97, 0.99, 0.99)
+
+#library(ggplot2)
+.THEME    = theme_bw(base_size = 12, base_family = "") +
+  theme(strip.text.x = element_text(margin= margin(1,0,1,0)),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        strip.background = element_rect(color="white",fill="white"))
+
+#==YPR
+laa<-ggplot(life_hist)+
+  geom_line(aes(x= age,y= laa,color=year))+
+  facet_wrap(~species, scales ='free') +
+  ggtitle("length-at-age") +
+  .THEME
+
+waa <-ggplot(life_hist)+
+  geom_line(aes(x= age,y= waa,color=year))+
+  facet_wrap(~species, scales ='free') +
+  ggtitle("weight-at-age") +
+  .THEME
+
+maa <-ggplot(life_hist)+
+  geom_line(aes(x= age,y= mataa,color=year))+
+  facet_wrap(~species, scales ='free') +
+  ggtitle("maturity-at-age") +
+  .THEME
+
+saa <-ggplot(life_hist)+
+  geom_line(aes(x= age,y= selaa,color=year))+
+  facet_wrap(~species, scales ='free') +
+  ggtitle("selectivity-at-age") +
+  .THEME
+
+mortaa <-ggplot(life_hist)+
+  geom_line(aes(x= age,y= mortaa,color=year))+
+  facet_wrap(~species, scales ='free') +
+  ggtitle("natural mortality-at-age") +
+  .THEME
+
+print(laa)
+print(waa)
+print(mortaa)
+print(maa)
+print(saa)
+
+# ggpubr::ggarrange(laa, waa, mortaa, ncol = 3, nrow = 1)
+# ggpubr::ggarrange(maa, saa, ncol = 2, nrow = 1)
+
+
+  
+```
+
+### analysis loop 
+
+we also include calculation of reproductive allocation assuming with hyperallometric allocation
+
+```{r} 
+specs <- specs2
+
+proj_yr<-100
+input_f<-seq(0.00,1.5,0.01)
+
+unq_stock<-unique(specs$species)
+big_out <-data.frame(ypr=NULL,sbpr=NULL,sbpr_hyp=NULL,f=NULL,year=NULL,stock=NULL)
+big_out_sum <-data.frame(max_ypr=NULL,fmax=NULL,B40=NULL,F40=NULL,B40hyp=NULL,F40hyp=NULL,year=NULL,stock=NULL)
+for(x in 1:length(unq_stock))
+  
+{
+  specs_use<-dplyr::filter(specs, species == unq_stock[x])
+  unq_years<-unique(specs_use$year)
+  for(y in 1:length(unq_years))
+  {
+    #==ypr and sbpr curves
+    specs_use2<-dplyr::filter(specs_use, year == unq_years[y])
+    outs<-ypr_age(specs_in=specs_use2,proj_yr=100,input_f=input_f)
+    big_out<-rbind(big_out,data.frame(ypr=outs$ypr,sbpr=outs$sbpr,sbpr_hyp=outs$sbpr_hyper,f=outs$f,year=rep(unq_years[y],length(input_f)), stock=rep(unq_stock[x],length(input_f))))
+    #==reference points
+    #=find f_max and max_ypr
+    max_ypr<-max(outs$ypr)
+    f_max<-outs$f[which(outs$ypr==max(outs$ypr))]
+
+    #=find B40 and F40
+    B_40<-outs$sbpr[1]*.40
+    F_40<-outs$f[which(abs(outs$sbpr-B_40)==min(abs(outs$sbpr-B_40)))]
+    
+    #=find B40 and F40 with hyperallometric allocation
+    B_40_hyp<-outs$sbpr_hyper[1]*.40
+    F_40_hyp<-outs$f[which(abs(outs$sbpr_hyper-B_40_hyp)==min(abs(outs$sbpr_hyper-B_40_hyp)))]
+    
+    big_out_sum<-rbind(big_out_sum,data.frame(max_ypr=max_ypr,f_max=f_max,B40=B_40,F40=F_40,B40hyp=B_40_hyp, F40hyp = F_40_hyp, year=unq_years[y],stock=unq_stock[x]))
+  }
+}
+big_out$year<-as.character(big_out$year)
+big_out_sum$year<-as.character(big_out_sum$year)
+
+```
+
+### plots
+
+```{r}
+#library(ggplot2)
+.THEME    = theme_bw(base_size = 12, base_family = "") +
+  theme(strip.text.x = element_text(margin= margin(1,0,1,0)),
+        panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        strip.background = element_rect(color="white",fill="white"))
+
+#==YPR
+p<-ggplot(big_out)+
+  geom_line(aes(x=f,y=ypr,color=year))+
+  geom_point(data=big_out_sum,aes(x=f_max,y=max_ypr,color=year))+
+  facet_wrap(~stock, scales ='free') +
+  .THEME
+
+print(p)
+
+#==SBPR
+p<-ggplot(big_out)+
+  geom_line(aes(x=f,y=sbpr,color=year))+
+  geom_point(data=big_out_sum,aes(x=F40,y=B40,color=year))+
+  facet_wrap(~stock, scales ='free') +
+  .THEME
+print(p)
+
+#==SBPR with hyperallometric allocation
+p<-ggplot(big_out)+
+  geom_line(aes(x=f,y=sbpr_hyp,color=year))+
+  geom_point(data=big_out_sum,aes(x=F40hyp,y=B40hyp,color=year))+
+  facet_wrap(~stock, scales ='free') +
+  .THEME
+
+
+print(p)
+#==dots in these figures are the reference points
+
+knitr::kable(big_out_sum[,c(1:7)], digits=3)
+
+```
+
